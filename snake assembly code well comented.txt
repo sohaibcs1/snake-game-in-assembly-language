@@ -1,0 +1,681 @@
+;declair direction constants:
+left equ 0			;to declair constant outside the code segment we use {equ} statement
+top equ 2			; 	
+row equ 15			; 15 rows select where the snake move
+col equ 40			; 40 column select
+right equ left+col		; 
+bottom equ top+row		; (i.e) this variables will select box where the snake will move
+			;	________________________________________________
+			;	|						|
+			;	|						|
+			;	|						|
+			;	|		******>				|
+			;	|						|
+			;	|						|
+			;	|_______________________________________________|
+.model small
+.data          
+    msg db "Welcome to the snake game!!",0
+    instructions db 0AH,0DH,"Use a, s, d and f to control your snake",0AH,0DH,"Use q anytime to quit",0DH,0AH, "Press any key to continue$"
+	
+	;(0AH= 10 in decimal )move the cursor to the next row but same column(like \n)
+	;(0DH=13 in decimal)move the cursor to the bignning of current row (like \r)	
+
+    quitmsg db "Thanks for playing! hope you enjoyed",0		; this message will display (at 0 column and 0 row)i.e left side
+    gameovermsg db "OOPS!! your snake died! :P ", 0
+    scoremsg db "Score: ",0
+    head db '^',10,10	;define(initially head will at 10th row)
+    body db '*',10,11, 3*15 DUP(0)	;reserve 45 consective locations in the memory(for ****)
+    segmentcount db 1
+    fruitactive db 1		;'fruit' define which snake will eat
+    fruitx db 8			;x coordinate of fruit	
+    fruity db 8			;y co-ordinate of fruit
+    gameover db 0		
+    quit db 0   		
+    delaytime db 5		
+
+
+.stack
+    dw   128  dup(0)		;reserve 128 byte for stack
+
+
+.code
+
+main proc far
+	mov ax, @data		;we can not move directly data into DS(data segment)		
+	mov ds, ax 
+	
+	mov ax, 0b800H	;video mode
+	mov es, ax	;hold destination data
+	
+	;clearing the screen
+	mov ax, 0003H		 
+	int 10H
+	
+	lea bx, msg	; load effactive adress(IP) of msg variable
+	mov dx,00	;move 00 in dx 
+	call writestringat	;CALL pushes the return address onto the stack and transfers control to a procedure.
+				;RET pops the return address off the stack and returns control to that location.
+	lea dx, instructions	;lea statement will took the ip of 'instruction'
+	mov ah, 09H		;display on the screen instruction
+	int 21h
+	
+	mov ah, 07h		;read from console
+	int 21h
+	mov ax, 0003H		;active video mode
+	int 10H
+    call printbox 	;this will call a rutine     
+				;---------------------------------;
+				;				  ;
+				;				  ;
+				;_________________________________;
+    
+    
+mainloop:       
+    call delay             ;call a delay procedure(red system clock tick)
+    lea bx, msg			;give effactive adress(IP) of msg to bx
+    mov dx, 00			;dx clear
+    call writestringat		;that will wire charactor	
+    call shiftsnake		;motion of snake
+    cmp gameover,1		; if touch with boundry then game over
+    je gameover_mainloop
+    
+    call keyboardfunctions
+    cmp quit, 1
+    je quitpressed_mainloop	;print quit message game over
+    call fruitgeneration
+    call draw
+    
+    ;TODO: check gameover and quit
+    
+    jmp mainloop
+    
+gameover_mainloop: 
+    mov ax, 0003H	;return the screen to textmode
+	int 10H
+    mov delaytime, 100	;then delay 100 
+    mov dx, 0000H
+    lea bx, gameovermsg			;print message game over
+    call writestringat			
+    call delay    		;dely by using system clock system clock
+    jmp quit_mainloop		    
+    
+quitpressed_mainloop:
+    mov ax, 0003H	
+	int 10H    
+    mov delaytime, 100
+    mov dx, 0000H
+    lea bx, quitmsg		;print quit game message
+    call writestringat
+    call delay    
+    jmp quit_mainloop    ;if quit main loop then make jump
+
+    
+    
+
+quit_mainloop:			;when game over will clear screen
+;first clear screen
+mov ax, 0003H
+int 10h    
+mov ax, 4c00h
+int 21h  
+
+
+
+         
+
+
+delay proc 
+    
+    ;this procedure uses 1A interrupt,
+    
+    mov ah, 00
+    int 1Ah		;Read System Clock (Ticks)
+    mov bx, dx
+    
+jmp_delay:
+    int 1Ah
+    sub dx, bx		;subtraction
+					;there are about 18 ticks in a second, 10 ticks are about enough
+    cmp dl, delaytime                                                      
+    jl jmp_delay    
+    ret
+    
+delay endp
+   
+   
+
+
+fruitgeneration proc
+    mov ch, fruity	;display fruit that snake will eat
+    mov cl, fruitx	;cl= column     ch =row
+regenerate:
+    
+    cmp fruitactive, 1		;if fruit active
+    je ret_fruitactive
+    mov ah, 00
+    int 1Ah			;if fruit eat there will be on tic of system clock
+    ;dx contains the ticks
+    push dx
+    mov ax, dx ; movw row and column to ax
+    xor dx, dx
+    xor bh, bh	;check sign
+    mov bl, row		
+    dec bl
+    div bx
+    mov fruity, dl	; column to 'fruity' variable that is y coordinate 
+    inc fruity		; increment to fruity
+    
+    
+    pop ax			;pop ax valu from the stack
+    mov bl, col		; move column value in the column
+    dec dl			;one decrement in dl
+    xor bh, bh		;clear two registor
+    xor dx, dx		;clear dx registor 
+    div bx
+    mov fruitx, dl
+    inc fruitx
+    
+    cmp fruitx, cl		;compare x coordinante with cl
+    jne nevermind
+    cmp fruity, ch		;if y co-ordinate=ch(row) then jump to nevermind loop	
+    jne nevermind
+    jmp regenerate             
+nevermind:
+    mov al, fruitx
+    ror al,1		
+    jc regenerate	
+    
+    
+    add fruity, top
+    add fruitx, left 
+    
+    mov dh, fruity		;THIS CODE WILL REGENERATE THE
+    mov dl, fruitx		;		FRUIT(F)
+    call readcharat		;
+    cmp bl, '*'
+    je regenerate
+    cmp bl, '^'
+    je regenerate
+    cmp bl, '<'
+    je regenerate
+    cmp bl, '>'			;if snake eat fruit then then the fruit will regnerate 
+    je regenerate		;       at any position withen the Box
+    cmp bl, 'v'
+    je regenerate    
+    
+ret_fruitactive:
+    ret				;took ip of stack
+fruitgeneration endp
+
+
+dispdigit proc
+    add dl, '0'		;set cursor position
+    mov ah, 02H
+    int 21H
+    ret			;call for ip
+dispdigit endp   
+   
+dispnum proc    
+    test ax,ax
+    jz retz
+    xor dx, dx
+    ;ax contains the number to be displayed
+    ;bx must contain 10
+    mov bx,10
+    div bx
+    ;dispnum ax first.
+    push dx
+    call dispnum  
+    pop dx
+    call dispdigit		;this will display digit
+    ret
+retz:
+    mov ah, 02  ;pop the ip fromthe stack
+    ret    
+dispnum endp   
+
+
+
+;sets the cursor position, ax and bx used, dh=row, dl = column
+;preserves other registers
+setcursorpos proc
+    mov ah, 02H
+    push bx
+    mov bh,0
+    int 10h
+    pop bx
+    ret
+setcursorpos endp
+
+
+
+draw proc
+    lea bx, scoremsg		; bx contain score message
+    mov dx, 0109
+    call writestringat
+    
+    
+    add dx, 7
+    call setcursorpos
+    mov al, segmentcount	;count the segment value
+    dec al			
+    xor ah, ah
+    call dispnum
+        
+    lea si, head
+draw_loop:
+    mov bl, ds:[si]
+    test bl, bl			;draw the loop again and again
+    jz out_draw
+    mov dx, ds:[si+1]		; offset adress to dx
+    call writecharat
+    add si,3   			;add 3 to si
+    jmp draw_loop 
+
+out_draw:
+    mov bl, 'F'
+    mov dh, fruity		
+    mov dl, fruitx
+    call writecharat
+    mov fruitactive, 1
+    
+    ret		;pop stack ip 
+    
+    
+    
+draw endp	;draw procedure will end up
+
+
+
+;dl contains the ascii character if keypressed, else dl contains 0
+;uses dx and ax, preserves other registers
+readchar proc
+    mov ah, 01H		;Check if a key is pressed or not.
+    int 16H
+    jnz keybdpressed	; if key press then jump
+    xor dl, dl
+    ret
+keybdpressed:
+    ;extract the keystroke from the buffer
+    mov ah, 00H
+    int 16H
+    mov dl,al
+    ret
+
+
+readchar endp                    
+         
+         
+         
+                  
+                    
+
+
+keyboardfunctions proc
+    
+    call readchar
+    cmp dl, 0
+    je next_14
+    
+    ;so a key was pressed, which key was pressed then action?
+    cmp al,'w'		
+    jne next_11				;if key press jump to next_11
+    cmp head, 'v'
+    je next_14
+    mov head, '^'
+    ret
+next_11:
+    cmp al, 's'				;if w press head will move upword
+    jne next_12
+    cmp head,'^'			;if s press the head will move downword
+    je next_14
+    mov head, 'v'			;if a press head will move left side
+    ret
+next_12:				;if d press head will move right side
+    cmp al,'a'		
+    jne next_13				;if q press the game will quit
+    cmp head, '>'
+    je next_14
+    mov head, '<'
+    ret
+next_13:
+    cmp al,'d'
+    jne next_14
+    cmp head, '<'
+    je next_14
+    mov head,'>'
+next_14:    
+    cmp dl, 'q'			;quit the game
+    je quit_keyboardfunctions
+    ret    
+quit_keyboardfunctions:   
+    					;conditions for quitting in here please  
+    inc quit
+    ret
+    
+keyboardfunctions endp
+
+
+                    
+                    
+                    
+                    
+                    
+                    
+shiftsnake proc     
+    mov bx, offset head		;give ip  of '>'to bx 
+    
+    ;determine the where should the head go ?
+    ;preserve the head
+    xor ax, ax		;check the sign of ax
+    mov al, [bx]	;move adress of '>' into al
+    push ax		;push ax into stack
+    inc bx		;increment in bx(two byte)
+    mov ax, [bx]	
+    inc bx    
+    inc bx
+    xor cx, cx		
+l:      
+    mov si, [bx]
+    test si, [bx]	;chexck the bit and flag on
+    jz outside		;then jump to outside
+    inc cx     
+    inc bx
+    mov dx,[bx]
+    mov [bx], ax
+    mov ax,dx
+    inc bx
+    inc bx
+    jmp l
+    
+outside:    
+    
+    
+    ;hopefully, the snake will be shifted, i.e. moved.
+    ;now shift the head in its proper direction and then clear the last segment. 
+    ;But don't clear the last segment if the snake has eaten the fruit
+    pop ax
+    ;al contains the snake head direction
+    
+    push dx
+    ;dx now consists the coordinates of the last segment, we can use this to clear it
+    
+    
+    lea bx, head	;in bx effective adress (ip) of head		
+    inc bx		;increment				
+    mov dx, [bx]							;snake will move in direction <*********	
+    
+    cmp al, '<'		;compare if flag set then jump to next_1
+    jne next_1		;jump
+    dec dl	
+    dec dl
+    jmp done_checking_the_head	
+next_1:
+    cmp al, '>'								
+    jne next_2                					;snake will move in right direction *********>
+    inc dl 
+    inc dl
+    jmp done_checking_the_head
+    
+next_2:								;					^
+    cmp al, '^'							;;snake will move in direction 		*
+    jne next_3 							;					*
+    dec dh               					;					*
+                   						;					*
+    								;					*
+    jmp done_checking_the_head
+    
+next_3:
+    ;must be 'v'						;SNAKE WILL MOVE 	*
+    inc dh							;       DOWNWORD	*
+    								;			*
+done_checking_the_head:    					;			*
+    mov [bx],dx							;			v
+    
+    ;dx contains the new position of the head, now check whats in that position   
+    call readcharat 
+    ;bl contains the result
+    
+    cmp bl, 'F'							
+    je i_ate_fruit
+    
+    ;if fruit was not eaten, then clear the last segment, 
+    ;it will be cleared where?
+    mov cx, dx
+    pop dx 
+    cmp bl, '*'    ;the snake bit itself, gameover
+    je game_over
+    mov bl, 0
+    call writecharat
+    mov dx, cx
+    
+    
+    
+    
+    
+    ;check whether the snake is within the boundary
+    cmp dh, top
+    je game_over			;	_________________________________
+    cmp dh, bottom			;	|				|
+    je game_over			;	|  snake will withen the boundry|
+    cmp dl,left				;	|	                        |
+    je game_over			;	|				|
+    cmp dl, right			;	|		******>		|
+    je game_over			;	|_______________________________|
+    					
+    
+    
+    ;balance the stack, number of segment and the coordinate of the last segment
+    
+    ret			;pop stack ip
+game_over:
+    inc gameover
+    ret
+i_ate_fruit:			;when snake will eat fruit then increment in (*)body    
+
+    ; add a new segment then				; BEFORE 		
+    mov al, segmentcount				;	***>	F
+    xor ah, ah						;	
+    							;
+    							;	
+    lea bx, body	;=ADRESS OF BODY IN BX		;AFTER eat fruit
+    mov cx, 3						;
+    mul cx						;	****>
+    							;
+    pop dx						;
+    add bx, ax						;
+    mov byte ptr ds:[bx], '*'				;
+    mov [bx+1], dx
+    inc segmentcount						 
+    mov dh, fruity		;x co_ordinate 
+    mov dl, fruitx		;y co-ordinate
+    mov bl, 0
+    call writecharat		;will write charactor
+    mov fruitactive, 0   
+    ret			;pop ip forom the stack 
+shiftsnake endp		
+   			;end shift snake	
+   
+                               
+                               
+                               
+                               
+                               
+                               
+                               
+                               
+                               
+   
+         
+;Printbox
+printbox proc
+;Draw a box around
+    mov dh, top		
+    mov dl, left
+    mov cx, col
+    mov bl, '*'
+l1:                 
+    call writecharat	; print left-column				|
+    inc dl		;increment in the dl untill cx=column(40)	|
+    loop l1		;						|
+			;						|
+
+
+    
+    mov cx, row
+l2:
+   call writecharat	;this will print bottom row			|
+    inc dh		;increment in the dh untill cx=row(15)		|
+    loop l2		;						|
+    			;						|_______________________
+
+    mov cx, col
+l3:			;						
+    call writecharat	;this will print down-to-up col			|			|
+    dec dl		;decrement in the dl untill cx=column(40)	|			|
+    loop l3		;						|			|
+			;						|_______________________|
+
+    mov cx, row     
+l4:			;						_________________________
+    call writecharat	;this will print top row    			|			|
+    dec dh 		;decrement in the dh untill cx=column(15)	|			|
+    loop l4		;	    					|			|
+    			;						|_______________________|
+    ret		;pop ip from stack
+printbox endp
+              
+              
+              
+              
+              
+              
+              
+              
+              
+;dx contains row, col
+;bl contains the character to write
+;uses di. 
+writecharat proc
+    ;80x25
+    push dx		;push row and column in the stack
+    mov ax, dx		;mov dx int ax
+    and ax, 0FF00H	;took and operation on source and destination operand
+    shr ax,1		
+    shr ax,1
+    shr ax,1		;The shr instruction shifts all the bits which is in the destination operand to the right one bit shifting a zero
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    		; 8 times sar will perfom action
+    
+    push bx	;push string to stack
+    mov bh, 160
+    mul bh 
+    pop bx
+    and dx, 0FFH
+    shl dx,1
+    add ax, dx
+    mov di, ax
+    mov es:[di], bl	;bl will move in the memory
+    pop dx
+    ret   ;ret will pop stack ip 
+writecharat endp		;then writecharactor procedure will end
+            
+            
+            
+            
+            
+            
+            
+            
+            
+;dx contains row,col
+;returns the character at bl
+;uses di
+readcharat proc
+    push dx		;push row and column in the stack
+    mov ax, dx
+    and ax, 0FF00H
+    shr ax,1		;The shr instruction shifts all the bits which is in the destination operand to the right one bit shifting a zero
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1    
+    push bx		;shr perform 8 time action
+    mov bh, 160
+    mul bh 
+    pop bx
+    and dx, 0FFH	;and operation perform on source and destination operand
+    shl dx,1
+    add ax, dx
+    mov di, ax
+    mov bl,es:[di]
+    pop dx
+    ret		;pop stack ip
+readcharat endp        
+
+
+
+
+
+
+
+
+;dx contains row, col
+;bx contains the offset of the string
+writestringat proc
+    push dx			; push row and column in the stack
+    mov ax, dx		; mov row and column in the ax
+    and ax, 0FF00H	;perform AND operation on destination and source operand
+    shr ax,1		;The shr instruction shifts all the bits which is in the destination operand to the right one bit shifting a zero
+    shr ax,1			;first postion=0 and othe right shift
+    shr ax,1		;due to stack put MSB to right and first of MSB location to zero
+    shr ax,1		
+    shr ax,1
+    shr ax,1
+    shr ax,1
+    shr ax,1
+					; i.e goes to right side 8 times  
+    push bx			; then value in the stack=offset of string
+    mov bh, 160		;move 160 value in the BH
+    mul bh		;160*160 
+    
+    pop bx		;pop bx from stack
+    and dx, 0FFH	; and operation perform
+    shl dx,1		;the shr instruction shifts all the bits in the destination operand to the left one bit shifting a zero
+    add ax, dx		
+    mov di, ax
+loop_writestringat:
+    
+    mov al, [bx]		;gives bx adress to al
+    test al, al			; see the bit what the bit is on
+    jz exit_writestringat	;if jump is equal to zero then exit the loo[p]
+    mov es:[di], al			;move things around in memory
+    inc di					;as two byte took two byte so we increment 2 times
+    inc di
+    inc bx
+    jmp loop_writestringat
+    
+    
+exit_writestringat:
+    pop dx
+    ret			;return to operating system
+    
+    
+writestringat endp
+     
+     
+     
+     
+     
+     
+main endp
+          
+end main
